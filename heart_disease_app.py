@@ -22,7 +22,7 @@ def build_model():
 def load_model():
     model = build_model()
     model.load_state_dict(
-        torch.load('model/binary_mlp_final.pth', map_location='cpu')
+        torch.load('binary_mlp_final.pth', map_location='cpu')
     )
     model.eval()
     return model
