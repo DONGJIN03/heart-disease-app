@@ -2,3 +2,5 @@ streamlit
 torch
 numpy
 pandas
+joblib
+scikit-learn
