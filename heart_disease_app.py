@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
+import joblib
 
 st.set_page_config(
     page_title="심장질환 예측 시스템",
@@ -21,19 +22,14 @@ def build_model():
 def load_model():
     model = build_model()
     model.load_state_dict(
-        torch.load('binary_mlp_final.pth', map_location='cpu')
+        torch.load('model/binary_mlp_final.pth', map_location='cpu')
     )
     model.eval()
     return model
 
-# 학습 데이터 원본 기준 표준화 파라미터 (역산)
-RAW_PARAMS = {
-    'age':      {'mean': 54.4,  'std': 9.1},
-    'trestbps': {'mean': 131.6, 'std': 17.6},
-    'chol':     {'mean': 199.1, 'std': 110.0},
-    'thalch':   {'mean': 137.5, 'std': 25.9},
-    'oldpeak':  {'mean': 0.89,  'std': 1.07},
-}
+@st.cache_resource
+def load_scaler():
+    return joblib.load('scaler.pkl')
 
 FEATURE_COLS = [
     'age', 'sex', 'trestbps', 'chol', 'fbs', 'thalch', 'exang', 'oldpeak',
@@ -42,16 +38,17 @@ FEATURE_COLS = [
     'slope_flat', 'slope_upsloping'
 ]
 
+SCALE_COLS = ['age', 'trestbps', 'chol', 'thalch', 'oldpeak']
+
 def preprocess(inputs):
     row = {}
 
-    # 연속형 표준화
-    for col in ['age', 'trestbps', 'chol', 'thalch']:
-        row[col] = (inputs[col] - RAW_PARAMS[col]['mean']) / RAW_PARAMS[col]['std']
-
-    # oldpeak: log1p 후 표준화
-    oldpeak_log = np.log1p(max(inputs['oldpeak'], 0))
-    row['oldpeak'] = (oldpeak_log - RAW_PARAMS['oldpeak']['mean']) / RAW_PARAMS['oldpeak']['std']
+    # oldpeak: log1p 변환 (학습 때와 동일)
+    row['age']      = float(inputs['age'])
+    row['trestbps'] = float(inputs['trestbps'])
+    row['chol']     = float(inputs['chol'])
+    row['thalch']   = float(inputs['thalch'])
+    row['oldpeak']  = float(np.log1p(max(inputs['oldpeak'], 0)))
 
     # 이진형
     row['sex']   = 1.0 if inputs['sex'] == 'Male' else 0.0
@@ -83,6 +80,13 @@ def preprocess(inputs):
     v = slope_map[inputs['slope']]
     row['slope_flat']      = float(v[0])
     row['slope_upsloping'] = float(v[1])
+
+    # scaler로 연속형 표준화
+    scaler = load_scaler()
+    cont_values = np.array([[row[c] for c in SCALE_COLS]])
+    scaled = scaler.transform(cont_values)[0]
+    for i, col in enumerate(SCALE_COLS):
+        row[col] = scaled[i]
 
     x = np.array([row[col] for col in FEATURE_COLS], dtype=np.float32)
     return torch.FloatTensor(x).unsqueeze(0)
@@ -139,6 +143,12 @@ if st.button("예측하기", type="primary", use_container_width=True):
         st.error("모델 파일을 찾을 수 없습니다. 'model/binary_mlp_final.pth' 경로를 확인해주세요.")
         st.stop()
 
+    try:
+        load_scaler()
+    except FileNotFoundError:
+        st.error("스케일러 파일을 찾을 수 없습니다. 'scaler.pkl' 파일을 확인해주세요.")
+        st.stop()
+
     inputs = {
         'age': age, 'sex': sex, 'cp': cp,
         'trestbps': trestbps, 'chol': chol, 'fbs': fbs,
@@ -183,3 +193,4 @@ if st.button("예측하기", type="primary", use_container_width=True):
         st.table(pd.DataFrame(summary.items(), columns=["항목", "값"]))
 
     st.caption("※ 본 예측 결과는 연구용이며 의학적 진단을 대체하지 않습니다.")
+
